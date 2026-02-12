@@ -11,7 +11,8 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "test": "node --test",
-    "server:http": "node server/http-server.js"
+    "server:http": "node server/http-server.js",
+    "server:mcp": "node server/mcp-server.js"
   },
   "keywords": [
     "healthcare",
