@@ -151,7 +151,15 @@ const httpServer = http.createServer(async (req, res) => {
     
     // 1. Initialisierung (GET) -> Startet SSE Stream
     if (req.method === "GET") {
-      const sessionId = randomUUID();
+      
+      // 1. Strategie: Client gibt Session ID vor (z.B. Inspector)
+      let sessionId = url.searchParams.get("sessionId");
+      
+      // 2. Strategie: Neue Session ID generieren
+      if (!sessionId) {
+          sessionId = randomUUID();
+      }
+
       console.log(`[Setup] New SSE connection attempt. SessionID: ${sessionId}`);
       
       // KORREKTUR: Wir geben dem Transport direkt die URL MIT Session-ID
