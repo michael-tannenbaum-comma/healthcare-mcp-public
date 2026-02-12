@@ -135,6 +135,14 @@ const transports = new Map();
 const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
+  // GLOBAL LOGGER
+  console.log(`[HTTP] ${req.method} ${req.url}`);
+  try {
+      console.log(`[HTTP] Headers: ${JSON.stringify(req.headers)}`);
+  } catch (e) {
+      console.error(`[HTTP] Error stringifying headers`, e);
+  }
+
   // CORS Headers (Zwingend erforderlich für Inspector)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
