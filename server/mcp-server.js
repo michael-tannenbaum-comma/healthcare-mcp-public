@@ -138,7 +138,7 @@ const httpServer = http.createServer(async (req, res) => {
   // CORS Headers (Zwingend erforderlich für Inspector)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, mcp-session-id");
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -152,30 +152,55 @@ const httpServer = http.createServer(async (req, res) => {
     // 1. Initialisierung (GET) -> Startet SSE Stream
     if (req.method === "GET") {
       const sessionId = randomUUID();
+      console.log(`[Setup] New SSE connection attempt. SessionID: ${sessionId}`);
       
       // KORREKTUR: Wir geben dem Transport direkt die URL MIT Session-ID
       // Der SDK sendet diese URL dann als "endpoint"-Event an den Inspector.
       const transport = new SSEServerTransport(`/mcp?sessionId=${sessionId}`, res);
       
       transports.set(sessionId, transport);
-      console.log(`New SSE connection: ${sessionId}`);
+      console.log(`[Setup] Session created and map updated: ${sessionId}, Map Size: ${transports.size}`);
+
+      // Keep-Alive Loop: Sendet alle 15s einen Kommentar, um Timeouts zu verhindern
+      const keepAliveInterval = setInterval(() => {
+        if (res.writable) {
+            res.write(": keepalive\n\n");
+        } else {
+            clearInterval(keepAliveInterval);
+        }
+      }, 15000);
 
       // Transport verbinden
       await mcpServer.connect(transport);
 
       // Cleanup bei Verbindungsabbruch
       req.on("close", () => {
-        console.log(`Session closed: ${sessionId}`);
+        clearInterval(keepAliveInterval);
+        console.log(`[Teardown] Session closed: ${sessionId}`);
         transports.delete(sessionId);
+        console.log(`[Teardown] Map Size after delete: ${transports.size}`);
       });
       return;
     }
 
     // 2. Nachrichten (POST) -> Verarbeitet JSON-RPC
     if (req.method === "POST") {
-      const sessionId = url.searchParams.get("sessionId");
+      // DEBUG LOGGING
+      console.log(`[POST] Received request`);
+
+      // 1. Strategie: Hole Session ID aus Header (Streamable HTTP Standard)
+      let sessionId = req.headers["mcp-session-id"];
       
+      // 2. Strategie: Fallback auf Query Parameter
+      if (!sessionId) {
+          sessionId = url.searchParams.get("sessionId");
+      }
+
+      console.log(`[POST] Extracted Session ID: ${sessionId}`);
+
+      // Check Session
       if (!sessionId || !transports.has(sessionId)) {
+        console.warn(`[POST] Session not found or invalid: ${sessionId}. Available Sessions: ${[...transports.keys()].join(', ')}`);
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Session not found. Connect via GET first." }));
         return;
@@ -183,6 +208,7 @@ const httpServer = http.createServer(async (req, res) => {
 
       const transport = transports.get(sessionId);
       
+      console.log(`[POST] Forwarding message to transport for session: ${sessionId}`);
       // Nachricht an den existierenden Transport weiterleiten
       await transport.handlePostMessage(req, res);
       return;
