@@ -23,10 +23,11 @@ import { NcbiBookshelfTool } from './ncbi-bookshelf-tool.js';
 import { DicomTool } from './dicom-tool.js';
 import { UsageService } from './usage-service.js';
 
-// --- SERVICE SETUP (Wie im Original) ---
+// --- SERVICE SETUP ---
 const cacheService = new CacheService(parseInt(process.env.CACHE_TTL) || 86400);
 const usageService = new UsageService();
 
+// Tools initialisieren (wie gehabt)
 const tools = [
   new FDATool(cacheService),
   new PubMedTool(cacheService),
@@ -47,9 +48,6 @@ const mcpServer = new Server(
 
 // Tools registrieren
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
-  // Wir bauen die Tool-Liste dynamisch aus den vorhandenen Klassen (oder Hardcoded wie im Original)
-  // Hier der Einfachheit halber eine gekürzte Liste der wichtigsten Tools, 
-  // die auch im originalen index.js definiert waren:
   return {
     tools: [
       {
@@ -101,35 +99,24 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["condition"],
         },
       }
-      // Füge hier bei Bedarf weitere Tools aus der index.js hinzu
     ],
   };
 });
 
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const sessionId = "streamable-session"; // In echter Prod-Umgebung aus dem Request extrahieren
+  const sessionId = "streamable-session";
   
   try {
     usageService.recordUsage(sessionId, name);
     let result;
 
-    // Mapping der Tool-Aufrufe
     switch (name) {
-      case "fda_drug_lookup": 
-        result = await tools[0].lookupDrug(args.drug_name, args.search_type); 
-        break;
-      case "pubmed_search": 
-        result = await tools[1].searchLiterature(args.query, args.max_results, args.date_range, args.open_access); 
-        break;
-      case "calculate_bmi": 
-        result = tools[6].calculateBmi(args.height_meters, args.weight_kg); 
-        break;
-      case "clinical_trials_search": 
-        result = await tools[3].searchTrials(args.condition, args.status, args.max_results); 
-        break;
-      default: 
-        throw new Error(`Unknown tool: ${name}`);
+      case "fda_drug_lookup": result = await tools[0].lookupDrug(args.drug_name, args.search_type); break;
+      case "pubmed_search": result = await tools[1].searchLiterature(args.query, args.max_results, args.date_range, args.open_access); break;
+      case "calculate_bmi": result = tools[6].calculateBmi(args.height_meters, args.weight_kg); break;
+      case "clinical_trials_search": result = await tools[3].searchTrials(args.condition, args.status, args.max_results); break;
+      default: throw new Error(`Unknown tool: ${name}`);
     }
 
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -138,18 +125,20 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// --- MODERN STREAMABLE HTTP SERVER ---
+// --- HTTP SERVER ---
 
 const PORT = process.env.PORT || 8000;
-const sessions = new Map();
+
+// Hier speichern wir aktive SSE-Verbindungen
+const transports = new Map();
 
 const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  // CORS ist PFLICHT für Streamable HTTP
+  // CORS Headers (Zwingend erforderlich für Inspector)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Mcp-Session-Id");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -162,16 +151,14 @@ const httpServer = http.createServer(async (req, res) => {
     
     // 1. Initialisierung (GET) -> Startet SSE Stream
     if (req.method === "GET") {
-      const transport = new SSEServerTransport("/mcp", res);
       const sessionId = randomUUID();
       
-      // Session speichern
-      sessions.set(sessionId, transport);
+      // KORREKTUR: Wir geben dem Transport direkt die URL MIT Session-ID
+      // Der SDK sendet diese URL dann als "endpoint"-Event an den Inspector.
+      const transport = new SSEServerTransport(`/mcp?sessionId=${sessionId}`, res);
       
-      // Session ID im Header zurückgeben (Wichtig für Streamable HTTP!)
-      res.setHeader("X-Mcp-Session-Id", sessionId);
-      
-      console.log(`New Streamable HTTP session: ${sessionId}`);
+      transports.set(sessionId, transport);
+      console.log(`New SSE connection: ${sessionId}`);
 
       // Transport verbinden
       await mcpServer.connect(transport);
@@ -179,23 +166,22 @@ const httpServer = http.createServer(async (req, res) => {
       // Cleanup bei Verbindungsabbruch
       req.on("close", () => {
         console.log(`Session closed: ${sessionId}`);
-        sessions.delete(sessionId);
+        transports.delete(sessionId);
       });
       return;
     }
 
     // 2. Nachrichten (POST) -> Verarbeitet JSON-RPC
     if (req.method === "POST") {
-      // Session ID aus Header oder Query lesen
-      const sessionId = req.headers["x-mcp-session-id"] || url.searchParams.get("sessionId");
+      const sessionId = url.searchParams.get("sessionId");
       
-      if (!sessionId || !sessions.has(sessionId)) {
-        res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Session ID required or invalid. Connect via GET /mcp first." }));
+      if (!sessionId || !transports.has(sessionId)) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Session not found. Connect via GET first." }));
         return;
       }
 
-      const transport = sessions.get(sessionId);
+      const transport = transports.get(sessionId);
       
       // Nachricht an den existierenden Transport weiterleiten
       await transport.handlePostMessage(req, res);
@@ -204,10 +190,10 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   res.writeHead(404);
-  res.end("Not Found - Use /mcp endpoint");
+  res.end("Not Found");
 });
 
 httpServer.listen(PORT, () => {
   console.log(`Streamable HTTP Server running on port ${PORT}`);
-  console.log(`Endpoint: http://localhost:${PORT}/mcp`);
+  console.log(`Endpoint for Inspector: https://<DEIN-RENDER-URL>/mcp`);
 });
