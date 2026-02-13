@@ -98,6 +98,65 @@ function createMcpServer() {
             },
             required: ["condition"],
           },
+        },
+        {
+          name: "health_topics_search",
+          description: "Get evidence-based health information from Health.gov on various topics",
+          inputSchema: {
+            type: "object",
+            properties: {
+              topic: { type: "string", description: "The health topic to search for" },
+              language: { type: "string", enum: ["en", "es"], default: "en", description: "Language for results (en or es)" },
+            },
+            required: ["topic"],
+          },
+        },
+        {
+          name: "icd_code_lookup",
+          description: "Look up ICD-10 codes by code or description for medical terminology",
+          inputSchema: {
+            type: "object",
+            properties: {
+              code: { type: "string", description: "ICD-10 code to look up" },
+              description: { type: "string", description: "Description to search for" },
+              max_results: { type: "number", default: 10, description: "Maximum number of results (1-50)" },
+            },
+          },
+        },
+        {
+          name: "medrxiv_search",
+          description: "Search for pre-print medical research articles on medRxiv",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Search query for medRxiv" },
+              max_results: { type: "number", default: 10, description: "Maximum number of results (1-100)" },
+            },
+            required: ["query"],
+          },
+        },
+        {
+          name: "ncbi_bookshelf_search",
+          description: "Search the NCBI Bookshelf for medical books and documents",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Search query for NCBI Bookshelf" },
+              max_results: { type: "number", default: 10, description: "Maximum number of results (1-100)" },
+            },
+            required: ["query"],
+          },
+        },
+        {
+          name: "dicom_extract_metadata",
+          description: "Extract metadata (patient name, ID, study/series descriptions) from a DICOM file",
+          inputSchema: {
+            type: "object",
+            properties: {
+              file_path: { type: "string", description: "Path to the DICOM file" },
+            },
+            required: ["file_path"],
+          },
         }
       ],
     };
@@ -116,6 +175,11 @@ function createMcpServer() {
         case "pubmed_search": result = await tools[1].searchLiterature(args.query, args.max_results, args.date_range, args.open_access); break;
         case "calculate_bmi": result = tools[6].calculateBmi(args.height_meters, args.weight_kg); break;
         case "clinical_trials_search": result = await tools[3].searchTrials(args.condition, args.status, args.max_results); break;
+        case "health_topics_search": result = await tools[2].getHealthTopics(args.topic, args.language); break;
+        case "icd_code_lookup": result = await tools[4].lookupICDCode(args.code, args.description, args.max_results); break;
+        case "medrxiv_search": result = await tools[5].search(args.query, args.max_results); break;
+        case "ncbi_bookshelf_search": result = await tools[7].search(args.query, args.max_results); break;
+        case "dicom_extract_metadata": result = tools[8].extractMetadata(args.file_path); break;
         default: throw new Error(`Unknown tool: ${name}`);
       }
 
